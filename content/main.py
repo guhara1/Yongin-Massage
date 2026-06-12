@@ -219,7 +219,7 @@ PAGE = {
     "desc": "용인 출장마사지·홈타이 안내입니다. 처인구·기흥구·수지구와 주요 역세권, 테마별 관리, 예약 전 확인사항을 확인해보세요.",
     "h1": "용인 출장마사지·홈타이 예약 안내",
     "body": _BODY,
-    "extra_head": _JSONLD,
+    "extra_head": '<meta name="naver-site-verification" content="44ff55e324e1184de4c32682d74719bb4507fbb2" />\n' + _JSONLD,
     "breadcrumb": [],
     "hero": _HERO,
 }
