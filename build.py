@@ -9,6 +9,7 @@ content/ 패키지의 페이지 정의를 읽어 정적 HTML을 생성한다.
   - 지역+역+테마 조합 경로는 생성 자체가 불가능한 구조
 """
 import html
+import json
 import os
 import re
 import shutil
@@ -146,6 +147,7 @@ def render_page(page: dict) -> str:
 <meta name="description" content="{desc}">
 {robots}
 <link rel="canonical" href="{canonical}">
+<link rel="alternate" type="application/rss+xml" title="{BRAND} RSS" href="{BASE_URL.rstrip('/')}/rss.xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="{title}">
 <meta property="og:description" content="{desc}">
@@ -287,26 +289,41 @@ def build() -> None:
         )
 
     # rss.xml — 네이버 서치어드바이저 RSS 제출용 (RSS 2.0)
+    # pubDate는 최초 발행 시각을 content/pubdates.json에 기록해 재빌드해도 유지한다.
+    # (매 빌드마다 전체 pubDate가 바뀌면 네이버가 기존 글을 계속 새 글로 오인)
     now_rfc822 = format_datetime(datetime.now(timezone.utc))
     base = BASE_URL.rstrip("/")
+    dates_file = os.path.join(ROOT, "content", "pubdates.json")
+    try:
+        with open(dates_file, encoding="utf-8") as f:
+            pubdates = json.load(f)
+    except (FileNotFoundError, ValueError):
+        pubdates = {}
     items = []
     for page in rss_items:
         loc = base + "/" + page["path"]
+        key = page["path"] or "/"
+        if key not in pubdates:
+            pubdates[key] = now_rfc822
         items.append(
             "  <item>\n"
             f"    <title>{html.escape(page['title'])}</title>\n"
             f"    <link>{loc}</link>\n"
             f"    <guid isPermaLink=\"true\">{loc}</guid>\n"
             f"    <description>{html.escape(page['desc'])}</description>\n"
-            f"    <pubDate>{now_rfc822}</pubDate>\n"
+            f"    <pubDate>{pubdates[key]}</pubDate>\n"
             "  </item>"
         )
+    with open(dates_file, "w", encoding="utf-8") as f:
+        json.dump(pubdates, f, ensure_ascii=False, indent=1)
+        f.write("\n")
     with open(os.path.join(ROOT, "rss.xml"), "w", encoding="utf-8") as f:
         f.write(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
-            '<rss version="2.0">\n<channel>\n'
+            '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">\n<channel>\n'
             f"  <title>{html.escape(BRAND)} — 용인 출장마사지·홈타이 안내</title>\n"
             f"  <link>{base}/</link>\n"
+            f'  <atom:link href="{base}/rss.xml" rel="self" type="application/rss+xml"/>\n'
             "  <description>용인 전지역 방문 관리 안내. 지역별·지하철역별·테마별 페이지와 매거진 소식을 제공합니다.</description>\n"
             "  <language>ko</language>\n"
             f"  <lastBuildDate>{now_rfc822}</lastBuildDate>\n"
@@ -314,12 +331,16 @@ def build() -> None:
             + "\n</channel>\n</rss>\n"
         )
 
-    # robots.txt — 전체 허용 + 네이버(Yeti)·구글(Googlebot) 명시, sitemap/rss 참조
+    # robots.txt — 전체 허용. 네이버(Yeti)·구글(Googlebot)·빙(Bingbot)·다음(Daumoa)을
+    # 명시해 크롤러별 규칙 해석 모호성을 없애고, Crawl-delay는 두지 않아(=제한 없음)
+    # 색인 속도를 떨어뜨리지 않는다. sitemap·rss를 모두 참조시켜 발견 경로를 이중화.
     with open(os.path.join(ROOT, "robots.txt"), "w", encoding="utf-8") as f:
         f.write(
             "User-agent: *\nAllow: /\n\n"
             "User-agent: Googlebot\nAllow: /\n\n"
             "User-agent: Yeti\nAllow: /\n\n"
+            "User-agent: Bingbot\nAllow: /\n\n"
+            "User-agent: Daumoa\nAllow: /\n\n"
             f"Sitemap: {base}/sitemap.xml\n"
             f"Sitemap: {base}/rss.xml\n"
         )
