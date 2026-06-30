@@ -1,73 +1,14 @@
 # 메인 페이지 — 허브 역할. 모든 키워드를 밀어 넣지 않고 상세 페이지로 연결한다.
+# 구조화 데이터(LocalBusiness·FAQPage·WebSite 등)는 build.py가 본문·크럼을 읽어
+# 전 페이지에 자동 생성하므로, 여기서는 검색엔진 소유권 인증 메타만 둔다.
 from .site import BASE_URL, BRAND, PHONE, PHONE_DISPLAY
 from .pricing import PRICING
 
-_JSONLD = f"""<script type="application/ld+json">
-{{
-  "@context": "https://schema.org",
-  "@type": "HealthAndBeautyBusiness",
-  "name": "{BRAND}",
-  "telephone": "{PHONE}",
-  "url": "{BASE_URL}/",
-  "image": "{BASE_URL}/assets/og-image.png",
-  "description": "용인 전지역 방문 출장마사지·홈타이 예약 안내",
-  "areaServed": {{
-    "@type": "AdministrativeArea",
-    "name": "경기도 용인시"
-  }},
-  "openingHours": "Mo-Su 00:00-24:00",
-  "priceRange": "₩90,000 - ₩180,000"
-}}
-</script>
-<script type="application/ld+json">
-{{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "mainEntity": [
-    {{
-      "@type": "Question",
-      "name": "용인 전지역 방문이 가능한가요?",
-      "acceptedAnswer": {{
-        "@type": "Answer",
-        "text": "예약 시간, 정확한 위치, 배정 상황에 따라 가능 여부가 달라집니다. 지역별 안내 페이지에서 처인구, 기흥구, 수지구 기준으로 확인할 수 있습니다."
-      }}
-    }},
-    {{
-      "@type": "Question",
-      "name": "기흥역이나 수지구청역 근처도 가능한가요?",
-      "acceptedAnswer": {{
-        "@type": "Answer",
-        "text": "주요 역세권은 역 상세 페이지에서 주변 생활권과 함께 안내합니다. 정확한 가능 여부는 예약 시 위치를 기준으로 확인합니다."
-      }}
-    }},
-    {{
-      "@type": "Question",
-      "name": "죽전1동과 죽전2동은 왜 따로 없나요?",
-      "acceptedAnswer": {{
-        "@type": "Answer",
-        "text": "죽전1동부터 죽전3동까지는 죽전동 대표 페이지에서 통합 안내하여 중복 페이지 위험을 줄입니다."
-      }}
-    }},
-    {{
-      "@type": "Question",
-      "name": "당일 예약도 가능한가요?",
-      "acceptedAnswer": {{
-        "@type": "Answer",
-        "text": "가능할 수 있지만 저녁 시간대와 주말은 문의가 많을 수 있어 사전 예약을 권장합니다."
-      }}
-    }},
-    {{
-      "@type": "Question",
-      "name": "테마별 관리는 어디에서 확인하나요?",
-      "acceptedAnswer": {{
-        "@type": "Answer",
-        "text": "스웨디시, 타이마사지, 홈케어 등 테마별 안내 페이지에서 특징과 추천 대상을 확인할 수 있습니다."
-      }}
-    }}
-  ]
-}}
-</script>
-"""
+# 네이버 서치어드바이저 소유권 인증(도메인별 등록 모두 유지)
+_VERIFY_META = (
+    '<meta name="naver-site-verification" content="cb0c61f1d499272bb75538ea90c21d219ceb0286" />\n'
+    '<meta name="naver-site-verification" content="44ff55e324e1184de4c32682d74719bb4507fbb2" />\n'
+)
 
 _HERO = f"""<section class="hero">
   <div class="hero-inner">
@@ -219,7 +160,7 @@ PAGE = {
     "desc": "용인 출장마사지·홈타이 안내입니다. 처인구·기흥구·수지구와 주요 역세권, 테마별 관리, 예약 전 확인사항을 확인해보세요.",
     "h1": "용인 출장마사지·홈타이 예약 안내",
     "body": _BODY,
-    "extra_head": '<meta name="naver-site-verification" content="44ff55e324e1184de4c32682d74719bb4507fbb2" />\n' + _JSONLD,
+    "extra_head": _VERIFY_META,
     "breadcrumb": [],
     "hero": _HERO,
 }

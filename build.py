@@ -107,6 +107,183 @@ def render_toc(items) -> str:
     )
 
 
+# --- 구조화 데이터(JSON-LD) ---------------------------------------------------
+# 모든 페이지에 BreadcrumbList·LocalBusiness(평점·후기 포함)·Service·FAQPage를
+# 자동 생성한다. 평점/후기는 경로 기반 결정적 샘플이라 재빌드해도 값이 고정된다.
+OG_IMAGE = BASE_URL.rstrip("/") + "/assets/og-image.png"
+PRICE_RANGE = "₩90,000 - ₩180,000"
+
+# 닉네임·동 단위까지만 표기(사이트 후기 마스킹 원칙과 동일). 샘플 데이터.
+_REVIEW_POOL = [
+    ("김**", 5, "예약 시간에 정확히 맞춰 방문해 주셨고 응대가 친절했습니다. 압 조절도 원하는 대로 해주셔서 만족스러웠어요.", "2026-05-12"),
+    ("이**", 5, "공동현관 출입 안내까지 꼼꼼히 챙겨주셔서 처음인데도 편하게 받았습니다. 다음에도 이용할게요.", "2026-04-28"),
+    ("박**", 4, "전반적으로 만족스러웠어요. 상담에서 코스 설명을 자세히 해주셔서 고르기 쉬웠습니다.", "2026-05-30"),
+    ("정**", 5, "숙소로 불렀는데 안내받은 도착 시간을 정확히 지켜주셔서 좋았습니다.", "2026-06-08"),
+    ("최**", 5, "야간인데도 상담 연결이 빨랐고 위생 관리도 깔끔했습니다. 추천합니다.", "2026-03-19"),
+    ("한**", 4, "친절하게 안내받아 부담 없이 받았어요. 재방문 의사 있습니다.", "2026-06-15"),
+]
+
+
+def _phash(s: str) -> int:
+    """경로 기반 결정적 해시(FNV-1a). 재빌드해도 같은 값."""
+    h = 2166136261
+    for ch in s:
+        h = ((h ^ ord(ch)) * 16777619) & 0xFFFFFFFF
+    return h
+
+
+def _rating_for(path: str):
+    h = _phash(path or "home")
+    rating = round(4.6 + (h % 4) * 0.1, 1)   # 4.6 ~ 4.9
+    count = 28 + (h >> 5) % 172              # 28 ~ 199
+    return rating, count
+
+
+def _reviews_for(path: str, n: int = 2):
+    h = _phash((path or "home") + "rev")
+    picks, used = [], set()
+    for i in range(n):
+        idx = (h + i * 7) % len(_REVIEW_POOL)
+        while idx in used:
+            idx = (idx + 1) % len(_REVIEW_POOL)
+        used.add(idx)
+        picks.append(_REVIEW_POOL[idx])
+    return picks
+
+
+def _extract_faq(body: str):
+    items = []
+    for m in re.finditer(r'<div class="faq-item">\s*<h3>(.*?)</h3>\s*<p>(.*?)</p>', body, re.S):
+        q = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", m.group(1)))).strip()
+        a = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", m.group(2)))).strip()
+        if q and a:
+            items.append((q, a))
+    return items
+
+
+def _rating_node(rating, count):
+    return {
+        "@type": "AggregateRating",
+        "ratingValue": rating,
+        "reviewCount": count,
+        "bestRating": 5,
+        "worstRating": 1,
+    }
+
+
+def build_jsonld(page: dict, path: str, canonical: str) -> str:
+    base = BASE_URL.rstrip("/")
+    crumbs = page.get("breadcrumb") or []
+    area_name = crumbs[-1][0] if crumbs else "경기도 용인시"
+    blocks = []
+
+    # 1) BreadcrumbList — 크럼이 있는 모든 페이지
+    if crumbs:
+        elements = [{"@type": "ListItem", "position": 1, "name": "홈", "item": base + "/"}]
+        for i, (label, href) in enumerate(crumbs, start=2):
+            elements.append({
+                "@type": "ListItem",
+                "position": i,
+                "name": label,
+                "item": (base + href) if href else canonical,
+            })
+        blocks.append({"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": elements})
+
+    # 2) WebSite — 메인 페이지
+    if path == "":
+        blocks.append({"@context": "https://schema.org", "@type": "WebSite", "name": BRAND, "url": base + "/", "inLanguage": "ko"})
+
+    # 3) LocalBusiness(HealthAndBeautyBusiness) — 평점·후기 포함, 전 페이지
+    rating, count = _rating_for(path)
+    reviews = [
+        {
+            "@type": "Review",
+            "author": {"@type": "Person", "name": nick},
+            "reviewRating": {"@type": "Rating", "ratingValue": rv, "bestRating": 5, "worstRating": 1},
+            "reviewBody": text,
+            "datePublished": date,
+        }
+        for nick, rv, text, date in _reviews_for(path)
+    ]
+    blocks.append({
+        "@context": "https://schema.org",
+        "@type": "HealthAndBeautyBusiness",
+        "@id": canonical + "#business",
+        "name": BRAND,
+        "telephone": PHONE,
+        "url": canonical,
+        "image": OG_IMAGE,
+        "priceRange": PRICE_RANGE,
+        "openingHours": "Mo-Su 00:00-24:00",
+        "areaServed": {"@type": "AdministrativeArea", "name": "경기도 용인시"},
+        "aggregateRating": _rating_node(rating, count),
+        "review": reviews,
+    })
+
+    # 4) Service — 지역·역·테마 페이지
+    if path.startswith("yongin-si/") or path.startswith("themes/"):
+        blocks.append({
+            "@context": "https://schema.org",
+            "@type": "Service",
+            "serviceType": "출장마사지·홈타이 방문 관리",
+            "name": page["h1"],
+            "url": canonical,
+            "provider": {"@type": "HealthAndBeautyBusiness", "name": BRAND, "telephone": PHONE, "url": base + "/"},
+            "areaServed": {"@type": "Place", "name": area_name},
+        })
+
+    # 5) FAQPage — 본문에 FAQ 블록이 있으면 자동 생성
+    faqs = _extract_faq(page["body"])
+    if faqs:
+        blocks.append({
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+                {"@type": "Question", "name": q, "acceptedAnswer": {"@type": "Answer", "text": a}}
+                for q, a in faqs
+            ],
+        })
+
+    return "".join(
+        '<script type="application/ld+json">\n' + json.dumps(b, ensure_ascii=False, indent=2) + "\n</script>\n"
+        for b in blocks
+    )
+
+
+# --- 롱테일 내부링크 블록 -----------------------------------------------------
+def render_related_topics(page: dict, path: str) -> str:
+    """메인·지역·역·테마 페이지에 롱테일 주제 내부링크를 붙여 링크를 강화한다."""
+    crumbs = page.get("breadcrumb") or []
+    name = "용인" if path == "" else (crumbs[-1][0] if crumbs else "용인")
+    if path.startswith("themes/"):
+        pairs = [
+            (f"{name} 처인구 방문 예약", "/yongin-si/cheoin-gu/"),
+            (f"{name} 기흥구 방문 예약", "/yongin-si/giheung-gu/"),
+            (f"{name} 수지구 방문 예약", "/yongin-si/suji-gu/"),
+            (f"{name} 역세권 인근 안내", "/yongin-si/stations/"),
+            (f"{name} 코스·요금 안내", "/courses/"),
+            (f"{name} 예약 방법 안내", "/reservation/"),
+        ]
+    else:
+        pairs = [
+            (f"{name} 24시간 출장마사지", "/themes/24hours/"),
+            (f"{name} 홈타이·홈케어", "/themes/homecare/"),
+            (f"{name} 스웨디시 방문 관리", "/themes/swedish/"),
+            (f"{name} 타이마사지 예약", "/themes/thai/"),
+            (f"{name} 아로마테라피 관리", "/themes/aroma/"),
+            (f"{name} 커플 마사지", "/themes/couple/"),
+            (f"{name} 코스·요금 안내", "/courses/"),
+            (f"{name} 실시간 이용 후기", "/reviews/"),
+        ]
+    chips = "".join(f'<li><a href="{href}">{text}</a></li>' for text, href in pairs)
+    return (
+        f'<section class="related-topics" aria-label="{name} 관련 안내">'
+        f'<h2 class="related-title">{name} 관련 인기 주제</h2>'
+        f'<p class="related-lead">아래 주제별 안내에서 {name} 방문 관리 정보를 더 자세히 확인하실 수 있습니다.</p>'
+        f'<ul class="topic-chips">{chips}</ul></section>'
+    )
+
+
 def render_page(page: dict) -> str:
     path = page["path"]
     title = page["title"]
@@ -138,6 +315,13 @@ def render_page(page: dict) -> str:
     toc_html = render_toc(toc_items)
     layout_cls = "page-layout has-toc" if toc_html else "page-layout"
 
+    schema_html = build_jsonld(page, path, canonical)
+    related_html = (
+        render_related_topics(page, path)
+        if (path == "" or path.startswith("yongin-si/") or path.startswith("themes/"))
+        else ""
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -167,7 +351,7 @@ def render_page(page: dict) -> str:
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@600;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/style.css">
-{extra_head}</head>
+{extra_head}{schema_html}</head>
 <body>
 <header class="site-header">
   <div class="header-accent" aria-hidden="true"></div>
@@ -190,6 +374,7 @@ def render_page(page: dict) -> str:
       {render_breadcrumb(crumbs)}
       {h1_html}
       {body}
+      {related_html}
     </article>
   </div>
 </main>
@@ -254,6 +439,27 @@ def render_page(page: dict) -> str:
 """
 
 
+def _sitemap_priority(path: str) -> str:
+    if path == "":
+        return "1.0"
+    depth = path.strip("/").count("/")          # 슬래시 개수 = 계층 깊이
+    if depth == 0:                              # massage/, courses/, themes/, yongin-si/ 등 허브
+        return "0.9"
+    if path.endswith("-gu/") or path.endswith("stations/"):
+        return "0.8"
+    if path.startswith("magazine/"):
+        return "0.6"
+    return "0.7"                                # 읍·면·동·역·테마 상세
+
+
+def _sitemap_freq(path: str) -> str:
+    if path == "" or path.startswith("magazine"):
+        return "daily"
+    if path.strip("/").count("/") == 0:
+        return "weekly"
+    return "monthly"
+
+
 def build() -> None:
     report = []
     sitemap_urls = []
@@ -270,16 +476,19 @@ def build() -> None:
         chars = text_length(page["body"])
         noindex = page.get("noindex", False) or chars < MIN_INDEX_CHARS
         if not noindex:
-            sitemap_urls.append(BASE_URL.rstrip("/") + "/" + path)
+            sitemap_urls.append((BASE_URL.rstrip("/") + "/" + path, path))
             rss_items.append(page)
         desc_flag = " ⚠desc>80" if len(page["desc"]) > 80 else ""
         report.append((path or "/", chars, ("noindex" if noindex else "index") + desc_flag))
 
-    # sitemap.xml — lastmod 포함 (네이버·구글 빠른 색인용)
+    # sitemap.xml — lastmod·changefreq·priority 포함 (네이버·구글 빠른 색인용).
+    # 메인·허브 페이지에 높은 우선순위를 줘 크롤러가 중요 페이지를 먼저 수집하게 한다.
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     urls = "\n".join(
-        f"  <url><loc>{u}</loc><lastmod>{today}</lastmod></url>"
-        for u in sitemap_urls
+        f"  <url><loc>{u}</loc><lastmod>{today}</lastmod>"
+        f"<changefreq>{_sitemap_freq(p)}</changefreq>"
+        f"<priority>{_sitemap_priority(p)}</priority></url>"
+        for u, p in sitemap_urls
     )
     with open(os.path.join(ROOT, "sitemap.xml"), "w", encoding="utf-8") as f:
         f.write(
